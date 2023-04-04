@@ -1,9 +1,9 @@
 # Version 2.2
 
 NR_OF_BATTERIES = 2                                     # Nr. of physical batteries to be aggregated
-NR_OF_MPPTS = 1                                         # Nr. of MPPTs
+NR_OF_MPPTS = 0                                         # Nr. of MPPTs
 
-BATTERY_KEY_WORD = 'com.victronenergy.battery.tty'      # Key world to identify services of physical Serial Batteries
+BATTERY_KEY_WORD = 'com.victronenergy.battery'      # Key world to identify services of physical Serial Batteries
 BATTERY_NAME_KEY_WORD = 'SerialBattery'                 # Key world to identify the name of batteries (to exclude SmartShunt)
 BATTERY_NAME_PATH = '/CustomName'                       # What defines the battery name
 #BATTERY_NAME_PATH = '/HardwareVersion'
@@ -12,25 +12,25 @@ MULTI_KEY_WORD = 'com.victronenergy.vebus.tty'          # Key world to identify 
 MPPT_KEY_WORD = 'com.victronenergy.solarcharger.tty'    # Key world to identify services of solar chargers (RS not tested, only SmartSolar)
 SMARTSHUNT_NAME_KEY_WORD = 'SmartShunt'                 # Key world to identify services of SmartShunt (not tested) 
 
-SEARCH_TRIALS = 10                                      # Trials to identify of all batteries before exit and restart
+SEARCH_TRIALS = 30                                      # Trials to identify of all batteries before exit and restart
 READ_TRIALS = 10                                        # Trials to get consistent data of all batteries before exit and restart
 
 CURRENT_FROM_VICTRON = True                             # If True, the current measurement by Multis/Quattros and MPPTs is taken instead of BMS
 DC_LOADS = False                                        # If DC loads with Smart Shunt present, can be used for total current measurement 
 INVERT_SMARTSHUNT = False                               # False: Current subtracted, True: Current added
-OWN_SOC = True                                          # If True, the self calculated charge indicators are taken instead of BMS
+OWN_SOC = False                                          # If True, the self calculated charge indicators are taken instead of BMS
 CHARGE_SAVE_PRECISION = 0.0025                          # Trade-off between save precision and file access frequency
 
-OWN_CHARGE_PARAMETERS = True                            # Calculate own charge/discharge control parameters (True) from following settings
+OWN_CHARGE_PARAMETERS = False                            # Calculate own charge/discharge control parameters (True) from following settings
                                                         # or use them from battery driver (False)
-CHARGE_VOLTAGE = 2.5                                    # Constant voltage charge = this value * nr. of cells
-MAX_CELL_VOLTAGE = 2.53                                 # If reached by 1-st cell, the charger voltage is clamped to the measured value
-DISCHARGE_VOLTAGE = 2.0                                 # If reached, discharge current set to zero
-MIN_CELL_VOLTAGE = 1.9                                  # If reached, discharge current set to zero
-VOLTAGE_SET_PRECISION = 0.04                            # To be subtracted from the calculated max. charge voltage if MAX_CELL_VOLTAGE is exceeded
+CHARGE_VOLTAGE = 3.5625                                    # Constant voltage charge = this value * nr. of cells
+MAX_CELL_VOLTAGE = 3.65                                 # If reached by 1-st cell, the charger voltage is clamped to the measured value
+DISCHARGE_VOLTAGE = 2.875                                 # If reached, discharge current set to zero
+MIN_CELL_VOLTAGE = 2.75                                  # If reached, discharge current set to zero
+VOLTAGE_SET_PRECISION = 0.03                            # To be subtracted from the calculated max. charge voltage if MAX_CELL_VOLTAGE is exceeded
 
-MAX_CHARGE_CURRENT = 300                                # Max. charge current at normal conditions
-MAX_DISCHARGE_CURRENT = 200                             # Max. discharge current at normal conditions
+MAX_CHARGE_CURRENT = 100                                # Max. charge current at normal conditions
+MAX_DISCHARGE_CURRENT = 100                             # Max. discharge current at normal conditions
 
 # settings limiting charge and discharge current if at least one cell gets full or empty
 # the lists may have any length, but the same length for voltage and current

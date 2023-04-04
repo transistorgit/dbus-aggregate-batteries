@@ -390,210 +390,212 @@ class DbusAggBatService(object):
             else:
                 return True         # next call allowed
         
-        self._readTrials = 0        # must be reset after try-except
+        try:
+            self._readTrials = 0        # must be reset after try-except
+            
+            #####################################################
+            # Process collected values (except of dictionaries) #
+            #####################################################
+            
+            # averaging
+            Voltage = Voltage / NR_OF_BATTERIES
+            Temperature = Temperature / NR_OF_BATTERIES
+            VoltagesSum = sum(VoltagesSum) / NR_OF_BATTERIES
+            
+            if not OWN_SOC:                                                             # only if needed
+                Soc = Soc / NR_OF_BATTERIES
+            
+            # find max and min cell temperature (have no ID)
+            MaxCellTemp = self._fn._max(MaxCellTemperature)
+            MinCellTemp = self._fn._min(MinCellTemperature)
+            
+            if self._fn._max(NrOfCellsPerBattery) == self._fn._min(NrOfCellsPerBattery):        # Nr. of cells must be equal; to do: put outside of _update()
+                NrOfCellsPerBattery = NrOfCellsPerBattery[0]
+            else:
+                logging.error('%s: Number of cells of batteries is not equal. Exiting.'  % dt.now())
+                sys.exit()
+            
+            # find max in alarms
+            LowVoltage_alarm = self._fn._max(LowVoltage_alarm)
+            HighVoltage_alarm = self._fn._max(HighVoltage_alarm)
+            LowCellVoltage_alarm = self._fn._max(LowCellVoltage_alarm)
+            #HighCellVoltage_alarm = self._fn._max(HighCellVoltage_alarm)                   # not implemented in JK BMS
+            LowSoc_alarm = self._fn._max(LowSoc_alarm)
+            HighChargeCurrent_alarm = self._fn._max(HighChargeCurrent_alarm)
+            HighDischargeCurrent_alarm = self._fn._max(HighDischargeCurrent_alarm)
+            CellImbalance_alarm = self._fn._max(CellImbalance_alarm)
+            InternalFailure_alarm = self._fn._max(InternalFailure_alarm)
+            HighChargeTemperature_alarm = self._fn._max(HighChargeTemperature_alarm)
+            LowChargeTemperature_alarm = self._fn._max(LowChargeTemperature_alarm)
+            HighTemperature_alarm = self._fn._max(HighTemperature_alarm)
+            LowTemperature_alarm = self._fn._max(LowTemperature_alarm)
+            
+            # find max. charge voltage (if needed)
+            if not OWN_CHARGE_PARAMETERS:
+                MaxChargeVoltage = self._fn._min(MaxChargeVoltage)
+                MaxChargeCurrent = self._fn._min(MaxChargeCurrent) * NR_OF_BATTERIES
+                MaxDischargeCurrent = self._fn._min(MaxDischargeCurrent) * NR_OF_BATTERIES
+            
+            AllowToCharge = self._fn._min(AllowToCharge)
+            AllowToDischarge = self._fn._min(AllowToDischarge)
+            
+            ####################################
+            # Measure current by Victron stuff #
+            ####################################
+            
+            if CURRENT_FROM_VICTRON:
+                try:
+                    Current_VE = self._dbusMon.dbusmon.get_value(self._multi, '/Dc/0/Current')                          # get DC current of multi/quattro (or system of them)
+                    for i in range(NR_OF_MPPTS):
+                        Current_VE += self._dbusMon.dbusmon.get_value(self._mppts[i], '/Dc/0/Current')                  # add DC current of all MPPTs (if present)          
+                    
+                    if DC_LOADS:
+                        if INVERT_SMARTSHUNT:
+                            Current_VE += self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')            # SmartShunt is monitored as a battery
+                        else:
+                            Current_VE -= self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')
+                            
+                    Current = Current_VE                                                                                # BMS current overwritten only if no exception raised
+                    Power = Voltage * Current_VE                                                                        # calculate own power (not read from BMS)        
+                
+                except Exception:
+                    logging.error('%s: Victron current read error. Using BMS current and power instead.' % dt.now())    # the BMS values are not overwritten       
+            
+            ####################################################################################################
+            # Calculate own charge/discharge parameters (overwrite the values received from the SerialBattery) #
+            ####################################################################################################
+            
+            if OWN_CHARGE_PARAMETERS:                                                           
+                
+                # manage charge voltage       
+                if (Voltage >= CHARGE_VOLTAGE * NrOfCellsPerBattery):
+                    self._ownCharge = InstalledCapacity                                         # reset Coulumb counter to 100%
+                if MaxCellVoltage >= MAX_CELL_VOLTAGE:                         
+                    MaxChargeVoltage = min(chargeVoltageReduced) - VOLTAGE_SET_PRECISION        # avoid exceeding MAX_CELL_VOLTAGE, take the charger innacuracy into account
+                    self._ownCharge = InstalledCapacity                                         # reset Coulumb counter to 100%
+                else:     
+                    MaxChargeVoltage = CHARGE_VOLTAGE * NrOfCellsPerBattery
+                    
+                if (Voltage <= DISCHARGE_VOLTAGE * NrOfCellsPerBattery) or (MinCellVoltage <= MIN_CELL_VOLTAGE):
+                    self._ownCharge = 0                                                         # reset Coulumb counter to 0%     
+                    
         
-        #####################################################
-        # Process collected values (except of dictionaries) #
-        #####################################################
-        
-        # averaging
-        Voltage = Voltage / NR_OF_BATTERIES
-        Temperature = Temperature / NR_OF_BATTERIES
-        VoltagesSum = sum(VoltagesSum) / NR_OF_BATTERIES
-        
-        if not OWN_SOC:                                                             # only if needed
-            Soc = Soc / NR_OF_BATTERIES
-        
-        # find max and min cell temperature (have no ID)
-        MaxCellTemp = self._fn._max(MaxCellTemperature)
-        MinCellTemp = self._fn._min(MinCellTemperature)
-        
-        if self._fn._max(NrOfCellsPerBattery) == self._fn._min(NrOfCellsPerBattery):        # Nr. of cells must be equal; to do: put outside of _update()
-            NrOfCellsPerBattery = NrOfCellsPerBattery[0]
-        else:
-            logging.error('%s: Number of cells of batteries is not equal. Exiting.'  % dt.now())
+                # manage charge current
+                if NrOfModulesBlockingCharge > 0:
+                    MaxChargeCurrent = 0
+                else:
+                    MaxChargeCurrent = MAX_CHARGE_CURRENT * self._fn._interpolate(CELL_FULL_LIMITING_VOLTAGE, CELL_FULL_LIMITED_CURRENT, MaxCellVoltage)
+
+                # manage discharge current
+                if NrOfModulesBlockingDischarge > 0:
+                    MaxDischargeCurrent = 0
+                else:
+                    MaxDischargeCurrent = MAX_DISCHARGE_CURRENT * self._fn._interpolate(CELL_EMPTY_LIMITING_VOLTAGE, CELL_EMPTY_LIMITED_CURRENT, MinCellVoltage)
+            
+            # write message if the max charging voltage or max. charging or discharging current changes
+            if abs(MaxChargeVoltage - self._MaxChargeVoltage_old) >= LOG_VOLTAGE_CHANGE:
+                logging.info('%s: Max. charging voltage: %.1fV; Max. cell voltage: %.3fV'  % (dt.now(), MaxChargeVoltage, MaxCellVoltage))
+                self._MaxChargeVoltage_old = MaxChargeVoltage           
+            
+            if abs(MaxChargeCurrent - self._MaxChargeCurrent_old) >= LOG_CURRENT_CHANGE:
+                logging.info('%s: Max. charging current: %.1fA; Max. cell voltage: %.3fV'  % (dt.now(), MaxChargeCurrent, MaxCellVoltage))
+                self._MaxChargeCurrent_old = MaxChargeCurrent
+
+            if abs(MaxDischargeCurrent - self._MaxDischargeCurrent_old) >= LOG_CURRENT_CHANGE:
+                logging.info('%s: Max. discharging current: %.1fA; Min. cell voltage: %.3fV'  % (dt.now(), MaxDischargeCurrent, MinCellVoltage))
+                self._MaxDischargeCurrent_old = MaxDischargeCurrent        
+                
+            ###########################################################
+            # own Coulomb counter (runs even the BMS values are used) #
+            ###########################################################
+            
+
+            deltaTime = tt.time() - self._timeOld         
+            self._timeOld = tt.time()
+            self._ownCharge += Current * deltaTime / 3600
+            self._ownCharge = max(self._ownCharge, 0) 
+            self._ownCharge = min(self._ownCharge, InstalledCapacity)
+            ownSoc = 100* self._ownCharge / InstalledCapacity
+            
+            # store the charge into text file if changed significantly (avoid frequent file access)
+            if abs(self._ownCharge - self._ownCharge_old) >= (CHARGE_SAVE_PRECISION * InstalledCapacity):
+                self._charge_file = open('/data/dbus-aggregate-batteries/charge', 'w')
+                self._charge_file.write('%.3f' % self._ownCharge)
+                self._charge_file.close()
+                self._ownCharge_old = self._ownCharge
+    
+            # overwrite BMS charge values
+            if OWN_SOC:
+                Capacity = self._ownCharge
+                Soc = ownSoc
+                ConsumedAmphours = InstalledCapacity - self._ownCharge
+
+            #######################
+            # Send values to DBus #
+            #######################
+
+            with self._dbusservice as bus:
+                # send DC
+                bus['/Dc/0/Voltage'] = round(Voltage, 2)
+                bus['/Dc/0/Current'] = round(Current, 1)
+                bus['/Dc/0/Power'] = round(Power, 0)
+            
+                # send charge
+                bus['/Soc'] = Soc
+                bus['/Capacity'] = Capacity
+                bus['/InstalledCapacity'] = InstalledCapacity
+                bus['/ConsumedAmphours'] = ConsumedAmphours
+            
+                # send temperature
+                bus['/Dc/0/Temperature'] = Temperature
+                bus['/System/MaxCellTemperature'] = MaxCellTemp
+                bus['/System/MinCellTemperature'] = MinCellTemp
+            
+                # send cell voltages
+                bus['/System/MaxCellVoltage'] = MaxCellVoltage
+                bus['/System/MaxVoltageCellId'] = MaxVoltageCellId
+                bus['/System/MinCellVoltage'] = MinCellVoltage
+                bus['/System/MinVoltageCellId'] = MinVoltageCellId
+                bus['/Voltages/Sum']= VoltagesSum
+                bus['/Voltages/Diff']= MaxCellVoltage - MinCellVoltage
+                
+                # to do: move the battery names detection outside of _update() function to execute only once
+                # and create paths dynamically: '/Voltages/%s_Cell%d' % (BatteryName, cellID)
+                #    bus['/Voltages/%s' % cellName] = cellVoltages[cellName]
+            
+                # send battery state
+                bus['/System/NrOfCellsPerBattery'] = NrOfCellsPerBattery
+                bus['/System/NrOfModulesOnline'] = NrOfModulesOnline
+                bus['/System/NrOfModulesOffline'] = NrOfModulesOffline
+                bus['/System/NrOfModulesBlockingCharge'] = NrOfModulesBlockingCharge
+                bus['/System/NrOfModulesBlockingDischarge'] = NrOfModulesBlockingDischarge
+            
+                # send alarms
+                bus['/Alarms/LowVoltage'] = LowVoltage_alarm
+                bus['/Alarms/HighVoltage'] = HighVoltage_alarm
+                bus['/Alarms/LowCellVoltage'] = LowCellVoltage_alarm
+                #bus['/Alarms/HighCellVoltage'] = HighCellVoltage_alarm   # not implemended in Venus
+                bus['/Alarms/LowSoc'] = LowSoc_alarm
+                bus['/Alarms/HighChargeCurrent'] = HighChargeCurrent_alarm
+                bus['/Alarms/HighDischargeCurrent'] = HighDischargeCurrent_alarm
+                bus['/Alarms/CellImbalance'] = CellImbalance_alarm
+                bus['/Alarms/InternalFailure'] = InternalFailure_alarm
+                bus['/Alarms/HighChargeTemperature'] = HighChargeTemperature_alarm
+                bus['/Alarms/LowChargeTemperature'] = LowChargeTemperature_alarm
+                bus['/Alarms/HighTemperature'] = HighChargeTemperature_alarm
+                bus['/Alarms/LowTemperature'] = LowChargeTemperature_alarm
+            
+                # send charge/discharge control
+                bus['/Info/MaxChargeCurrent'] = MaxChargeCurrent
+                bus['/Info/MaxDischargeCurrent'] = MaxDischargeCurrent
+                bus['/Info/MaxChargeVoltage'] = MaxChargeVoltage
+                
+                # this does not control the charger, is only displayed in GUI
+                bus['/Io/AllowToCharge'] = AllowToCharge
+                bus['/Io/AllowToDischarge'] = AllowToDischarge
+        except Exception as err:
+            logging.error('%s: Calc or Dbus Error: %s. ' % (dt.now(), err))
             sys.exit()
-        
-        # find max in alarms
-        LowVoltage_alarm = self._fn._max(LowVoltage_alarm)
-        HighVoltage_alarm = self._fn._max(HighVoltage_alarm)
-        LowCellVoltage_alarm = self._fn._max(LowCellVoltage_alarm)
-        #HighCellVoltage_alarm = self._fn._max(HighCellVoltage_alarm)                   # not implemented in JK BMS
-        LowSoc_alarm = self._fn._max(LowSoc_alarm)
-        HighChargeCurrent_alarm = self._fn._max(HighChargeCurrent_alarm)
-        HighDischargeCurrent_alarm = self._fn._max(HighDischargeCurrent_alarm)
-        CellImbalance_alarm = self._fn._max(CellImbalance_alarm)
-        InternalFailure_alarm = self._fn._max(InternalFailure_alarm)
-        HighChargeTemperature_alarm = self._fn._max(HighChargeTemperature_alarm)
-        LowChargeTemperature_alarm = self._fn._max(LowChargeTemperature_alarm)
-        HighTemperature_alarm = self._fn._max(HighTemperature_alarm)
-        LowTemperature_alarm = self._fn._max(LowTemperature_alarm)
-        
-        # find max. charge voltage (if needed)
-        if not OWN_CHARGE_PARAMETERS:
-            MaxChargeVoltage = self._fn._min(MaxChargeVoltage)
-            MaxChargeCurrent = self._fn._min(MaxChargeCurrent) * NR_OF_BATTERIES
-            MaxDischargeCurrent = self._fn._min(MaxDischargeCurrent) * NR_OF_BATTERIES
-        
-        AllowToCharge = self._fn._min(AllowToCharge)
-        AllowToDischarge = self._fn._min(AllowToDischarge)
-        
-        ####################################
-        # Measure current by Victron stuff #
-        ####################################
-        
-        if CURRENT_FROM_VICTRON:
-            try:
-                Current_VE = self._dbusMon.dbusmon.get_value(self._multi, '/Dc/0/Current')                          # get DC current of multi/quattro (or system of them)
-                for i in range(NR_OF_MPPTS):
-                    Current_VE += self._dbusMon.dbusmon.get_value(self._mppts[i], '/Dc/0/Current')                  # add DC current of all MPPTs (if present)          
-                
-                if DC_LOADS:
-                    if INVERT_SMARTSHUNT:
-                        Current_VE += self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')            # SmartShunt is monitored as a battery
-                    else:
-                        Current_VE -= self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')
-                        
-                Current = Current_VE                                                                                # BMS current overwritten only if no exception raised
-                Power = Voltage * Current_VE                                                                        # calculate own power (not read from BMS)        
-            
-            except Exception:
-                logging.error('%s: Victron current read error. Using BMS current and power instead.' % dt.now())    # the BMS values are not overwritten       
-        
-        ####################################################################################################
-        # Calculate own charge/discharge parameters (overwrite the values received from the SerialBattery) #
-        ####################################################################################################
-        
-        if OWN_CHARGE_PARAMETERS:                                                           
-            
-            # manage charge voltage       
-            if (Voltage >= CHARGE_VOLTAGE * NrOfCellsPerBattery):
-                self._ownCharge = InstalledCapacity                                         # reset Coulumb counter to 100%
-            if MaxCellVoltage >= MAX_CELL_VOLTAGE:                         
-                MaxChargeVoltage = min(chargeVoltageReduced) - VOLTAGE_SET_PRECISION        # avoid exceeding MAX_CELL_VOLTAGE, take the charger innacuracy into account
-                self._ownCharge = InstalledCapacity                                         # reset Coulumb counter to 100%
-            else:     
-                MaxChargeVoltage = CHARGE_VOLTAGE * NrOfCellsPerBattery
-                
-            if (Voltage <= DISCHARGE_VOLTAGE * NrOfCellsPerBattery) or (MinCellVoltage <= MIN_CELL_VOLTAGE):
-                self._ownCharge = 0                                                         # reset Coulumb counter to 0%     
-                 
-       
-            # manage charge current
-            if NrOfModulesBlockingCharge > 0:
-                MaxChargeCurrent = 0
-            else:
-                MaxChargeCurrent = MAX_CHARGE_CURRENT * self._fn._interpolate(CELL_FULL_LIMITING_VOLTAGE, CELL_FULL_LIMITED_CURRENT, MaxCellVoltage)
-
-            # manage discharge current
-            if NrOfModulesBlockingDischarge > 0:
-                MaxDischargeCurrent = 0
-            else:
-                MaxDischargeCurrent = MAX_DISCHARGE_CURRENT * self._fn._interpolate(CELL_EMPTY_LIMITING_VOLTAGE, CELL_EMPTY_LIMITED_CURRENT, MinCellVoltage)
-        
-        # write message if the max charging voltage or max. charging or discharging current changes
-        if abs(MaxChargeVoltage - self._MaxChargeVoltage_old) >= LOG_VOLTAGE_CHANGE:
-            logging.info('%s: Max. charging voltage: %.1fV; Max. cell voltage: %.3fV'  % (dt.now(), MaxChargeVoltage, MaxCellVoltage))
-            self._MaxChargeVoltage_old = MaxChargeVoltage           
-        
-        if abs(MaxChargeCurrent - self._MaxChargeCurrent_old) >= LOG_CURRENT_CHANGE:
-            logging.info('%s: Max. charging current: %.1fA; Max. cell voltage: %.3fV'  % (dt.now(), MaxChargeCurrent, MaxCellVoltage))
-            self._MaxChargeCurrent_old = MaxChargeCurrent
-
-        if abs(MaxDischargeCurrent - self._MaxDischargeCurrent_old) >= LOG_CURRENT_CHANGE:
-            logging.info('%s: Max. dircharging current: %.1fA; Min. cell voltage: %.3fV'  % (dt.now(), MaxDischargeCurrent, MinCellVoltage))
-            self._MaxDischargeCurrent_old = MaxDischargeCurrent        
-               
-        ###########################################################
-        # own Coulomb counter (runs even the BMS values are used) #
-        ###########################################################
-        
-        deltaTime = tt.time() - self._timeOld         
-        self._timeOld = tt.time()
-        self._ownCharge += Current * deltaTime / 3600
-        self._ownCharge = max(self._ownCharge, 0) 
-        self._ownCharge = min(self._ownCharge, InstalledCapacity)
-        ownSoc = 100* self._ownCharge / InstalledCapacity
-        
-        # store the charge into text file if changed significantly (avoid frequent file access)
-        if abs(self._ownCharge - self._ownCharge_old) >= (CHARGE_SAVE_PRECISION * InstalledCapacity):
-            self._charge_file = open('/data/dbus-aggregate-batteries/charge', 'w')
-            self._charge_file.write('%.3f' % self._ownCharge)
-            self._charge_file.close()
-            self._ownCharge_old = self._ownCharge
-   
-        # overwrite BMS charge values
-        if OWN_SOC:
-            Capacity = self._ownCharge
-            Soc = ownSoc
-            ConsumedAmphours = InstalledCapacity - self._ownCharge
-        
-        #######################
-        # Send values to DBus #
-        #######################
-
-        with self._dbusservice as bus:
-
-            # send DC
-            bus['/Dc/0/Voltage'] = round(Voltage, 2)
-            bus['/Dc/0/Current'] = round(Current, 1)
-            bus['/Dc/0/Power'] = round(Power, 0)
-        
-            # send charge
-            bus['/Soc'] = Soc
-            bus['/Capacity'] = Capacity
-            bus['/InstalledCapacity'] = InstalledCapacity
-            bus['/ConsumedAmphours'] = ConsumedAmphours
-        
-            # send temperature
-            bus['/Dc/0/Temperature'] = Temperature
-            bus['/System/MaxCellTemperature'] = MaxCellTemp
-            bus['/System/MinCellTemperature'] = MinCellTemp
-        
-            # send cell voltages
-            bus['/System/MaxCellVoltage'] = MaxCellVoltage
-            bus['/System/MaxVoltageCellId'] = MaxVoltageCellId
-            bus['/System/MinCellVoltage'] = MinCellVoltage
-            bus['/System/MinVoltageCellId'] = MinVoltageCellId
-            bus['/Voltages/Sum']= VoltagesSum
-            bus['/Voltages/Diff']= MaxCellVoltage - MinCellVoltage
-            
-            # to do: move the battery names detection outside of _update() function to execute only once
-            # and create paths dynamically: '/Voltages/%s_Cell%d' % (BatteryName, cellID)
-            #    bus['/Voltages/%s' % cellName] = cellVoltages[cellName]
-        
-            # send battery state
-            bus['/System/NrOfCellsPerBattery'] = NrOfCellsPerBattery
-            bus['/System/NrOfModulesOnline'] = NrOfModulesOnline
-            bus['/System/NrOfModulesOffline'] = NrOfModulesOffline
-            bus['/System/NrOfModulesBlockingCharge'] = NrOfModulesBlockingCharge
-            bus['/System/NrOfModulesBlockingDischarge'] = NrOfModulesBlockingDischarge
-        
-            # send alarms
-            bus['/Alarms/LowVoltage'] = LowVoltage_alarm
-            bus['/Alarms/HighVoltage'] = HighVoltage_alarm
-            bus['/Alarms/LowCellVoltage'] = LowCellVoltage_alarm
-            #bus['/Alarms/HighCellVoltage'] = HighCellVoltage_alarm   # not implemended in Venus
-            bus['/Alarms/LowSoc'] = LowSoc_alarm
-            bus['/Alarms/HighChargeCurrent'] = HighChargeCurrent_alarm
-            bus['/Alarms/HighDischargeCurrent'] = HighDischargeCurrent_alarm
-            bus['/Alarms/CellImbalance'] = CellImbalance_alarm
-            bus['/Alarms/InternalFailure'] = InternalFailure_alarm
-            bus['/Alarms/HighChargeTemperature'] = HighChargeTemperature_alarm
-            bus['/Alarms/LowChargeTemperature'] = LowChargeTemperature_alarm
-            bus['/Alarms/HighTemperature'] = HighChargeTemperature_alarm
-            bus['/Alarms/LowTemperature'] = LowChargeTemperature_alarm
-        
-            # send charge/discharge control
-            bus['/Info/MaxChargeCurrent'] = MaxChargeCurrent
-            bus['/Info/MaxDischargeCurrent'] = MaxDischargeCurrent
-            bus['/Info/MaxChargeVoltage'] = MaxChargeVoltage
-            
-            # this does not control the charger, is only displayed in GUI
-            bus['/Io/AllowToCharge'] = AllowToCharge
-            bus['/Io/AllowToDischarge'] = AllowToDischarge
-            
-            
 
         return True
         
