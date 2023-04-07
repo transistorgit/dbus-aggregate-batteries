@@ -460,6 +460,16 @@ class DbusAggBatService(object):
                 
                 except Exception:
                     logging.error('%s: Victron current read error. Using BMS current and power instead.' % dt.now())    # the BMS values are not overwritten       
+
+                if DC_LOADS:
+                    if INVERT_SMARTSHUNT:
+                        Current_VE += self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')            # SmartShunt is monitored as a battery
+                    else:
+                        Current_VE -= self._dbusMon.dbusmon.get_value(self._smartShunt, '/Dc/0/Current')
+                        
+                if Current_VE is not None:
+	            Current = Current_VE                                                                            # BMS current overwritten only if no exception raised
+                    Power = Voltage * Current_VE                                                                    # calculate own power (not read from BMS)        
             
             ####################################################################################################
             # Calculate own charge/discharge parameters (overwrite the values received from the SerialBattery) #
